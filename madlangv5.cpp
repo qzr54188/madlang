@@ -37,8 +37,8 @@ static const char* CMD_NAMES[CMD_COUNT]={
   "GT","LT","NEQ","PUSH","POP","CALL","RET","WRITEFILE","ENV","ARGV"};
 
 static std::string OP_TABLE[10][CMD_COUNT];
-static const char OPCHARS[]="<>+-*/=^&|~%$@!#?:.";
-static const int OPCHARS_N=19;
+static const char OPCHARS[]="Il1O0S5Z2B8Qq";
+static const int OPCHARS_N=13;
 static void genOpTable(){
   std::mt19937 rng(0x4D35334Du);
   std::set<std::string> used;
@@ -256,11 +256,12 @@ static std::map<char,std::string> VARS;
 
 static std::string resolveArg(const std::string&a,bool&ok){
   ok=true;
-  if(a.size()==3&&a[0]=='#'&&a[1]=='$'&&a[2]>='0'&&a[2]<='9'){
-    if(!VARS.count(a[2])){ok=false;return "";}
-    return VARS[a[2]];
+  std::string dec=b64decode(b64decode(a));
+  if(dec.size()==3&&dec[0]=='#'&&dec[1]=='$'&&dec[2]>='0'&&dec[2]<='9'){
+    if(!VARS.count(dec[2])){ok=false;return "";}
+    return VARS[dec[2]];
   }
-  return decodeEscape(a);
+  return dec;
 }
 
 struct VM{std::map<int,size_t>lineMap;std::vector<std::string>stack;

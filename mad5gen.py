@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# mad5gen.py - 从简单描述生成 v5 源文件
+# mad5gen.py - 从简单描述生成 v5 源文件（v4 混淆叠加版）
 # 用法: mad5gen.py <spec.txt> <out.m5>
-import sys, os, subprocess
+import sys, os, subprocess, base64
 
 def load_ops(bin_path):
     out = subprocess.check_output([bin_path, '--map']).decode('utf-8', errors='replace')
@@ -33,16 +33,40 @@ SCHEMAS = [
     (None, None, None, None, '*'), (None, None, None, None, '?'),
 ]
 
+# spec 里的 ~s ~t 等转义，解码成真字符（在 base64 之前）
+def decode_spec_escape(s):
+    out = []
+    i = 0
+    while i < len(s):
+        if s[i] == '~' and i + 1 < len(s):
+            n = s[i+1]
+            out.append({'s':' ', 'c':';', 't':':', 'd':'-', 'u':'_', '~':'~', 'n':'\n'}.get(n, '~'+n))
+            i += 2
+        else:
+            out.append(s[i]); i += 1
+    return ''.join(out)
+
+# 参数双重 base64 编码
+def encode_arg(arg):
+    # 保留变量引用 #$X 的形式（但依然双重 base64）
+    if len(arg) == 3 and arg[0] == '#' and arg[1] == '$' and arg[2].isdigit():
+        raw = arg
+    else:
+        raw = decode_spec_escape(arg)
+    b1 = base64.b64encode(raw.encode('utf-8')).decode('ascii')
+    b2 = base64.b64encode(b1.encode('ascii')).decode('ascii')
+    return b2
+
 def build_body_tail(schema, op, args):
+    encoded = [encode_arg(a) for a in args]
     oo, oc, ao, ac, sep = SCHEMAS[schema]
     if ao and ac:
-        # 每个 arg 用一对括号包裹；0 个 arg 输出 op()
-        if args:
-            r = op + "".join(ao + a + ac for a in args)
+        if encoded:
+            r = op + "".join(ao + a + ac for a in encoded)
         else:
             r = op + ao + ac
     else:
-        r = (sep or '').join([op] + list(args))
+        r = (sep or '').join([op] + list(encoded))
     if oo and oc:
         r = oo + r + oc
     return r
