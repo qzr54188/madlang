@@ -1,0 +1,40 @@
+# 编译产物（根目录）
+/madlang
+/madlangc
+/madrepl
+/madlangv5
+*.bundle
+*.o
+*.obj
+
+# 编译中间产物
+madweb_tmp.*
+madrepl_*
+/madrepl_out*
+/madrepl_bundle*
+myhello
+myhello.cpp
+myhello.mgl
+myguess
+myguess.cpp
+myguess.mgl
+
+# 示例编译产物
+examples/hello
+examples/hello.cpp
+examples/fun
+examples/fun.cpp
+examples/count
+examples/count.cpp
+examples/guess
+examples/guess.cpp
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 临时文件
+.madrepl_buf.mgl
+*.log
+*.tmp
+.DS_Store
