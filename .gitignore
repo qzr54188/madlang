@@ -1,40 +1,22 @@
-# 编译产物（根目录）
-/madlang
-/madlangc
-/madrepl
-/madlangv5
-*.bundle
+# 编译产物
+madlangv5
+mad6
 *.o
 *.obj
 
-# 编译中间产物
-madweb_tmp.*
-madrepl_*
-/madrepl_out*
-/madrepl_bundle*
-myhello
-myhello.cpp
-myhello.mgl
-myguess
-myguess.cpp
-myguess.mgl
+# 一次性补丁脚本
+fix_stdin.py
+patch*.py
 
-# 示例编译产物
-examples/hello
-examples/hello.cpp
-examples/fun
-examples/fun.cpp
-examples/count
-examples/count.cpp
-examples/guess
-examples/guess.cpp
+# 临时工作文件
+work.spec
+work.m5
+*.tmp
+*.log
 
 # Python 缓存
 __pycache__/
 *.pyc
 
-# 临时文件
-.madrepl_buf.mgl
-*.log
-*.tmp
+# 系统
 .DS_Store

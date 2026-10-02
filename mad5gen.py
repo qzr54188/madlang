@@ -55,6 +55,13 @@ def decode_spec_escape(s):
     return ''.join(out)
 
 def encode_arg(arg):
+    # 单字符大写字母 = 变量名，不编码
+    if len(arg) == 1 and 'A' <= arg <= 'Z':
+        return arg
+    # 纯数字 = 数值参数，不编码
+    if arg.isdigit():
+        return arg
+    # 变量引用 #$X，原样双重 base64
     if len(arg) == 3 and arg[0] == '#' and arg[1] == '$' and arg[2].isdigit():
         raw = arg
     else:

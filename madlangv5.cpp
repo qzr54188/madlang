@@ -114,7 +114,7 @@ static ParsedBody parseBodyBySchema(int schema,const std::string&rest){
     while(!s.empty()&&s[0]==sd.arg_open){
       size_t end=s.find(sd.arg_close);
       if(end==std::string::npos)return p;
-      p.args.push_back(s.substr(1,end-1));
+      { std::string _av=s.substr(1,end-1); if(!_av.empty())p.args.push_back(_av); }
       s=s.substr(end+1);
     }
   }else{
@@ -312,8 +312,7 @@ static int runProgram(Program&prog,const std::string&stdin_data){
   VM vm;
   vm.rng.seed((unsigned)std::time(nullptr));
   for(size_t i=0;i<prog.cmds.size();i++)vm.lineMap[prog.cmds[i].logical]=i;
-  std::istringstream input(stdin_data);
-  VARS.clear();
+    VARS.clear();
   size_t pc=0;int guard=0;
   while(pc<prog.cmds.size()){
     if(++guard>1000000){std::cerr<<"[v5] step limit\n";return 1;}
@@ -334,7 +333,7 @@ static int runProgram(Program&prog,const std::string&stdin_data){
         VARS[c.args[0][0]]=v;break;}
       case CMD_INPUT:{
         if(c.args.empty()||c.args[0].size()!=1){std::cerr<<"[v5] INPUT 参数\n";return 1;}
-        std::string s;std::getline(input,s);
+        std::string s;std::getline(std::cin,s);
         VARS[c.args[0][0]]=s;break;}
       case CMD_JUMP:{
         int t=atoi(c.args[0].c_str());
@@ -479,6 +478,5 @@ int main(int argc,char**argv){
   if(!parseFile(ss.str(),prog,err)){
     std::cerr<<"[v5] 编译错误: "<<err<<"\n";return 1;
   }
-  std::stringstream input;input<<std::cin.rdbuf();
-  return runProgram(prog,input.str());
+    return runProgram(prog,"");
 }
