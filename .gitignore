@@ -1,16 +1,18 @@
 # 编译产物
 madlangv5
+madlangv6
 mad6
 *.o
 *.obj
 
 # 一次性补丁脚本
-fix_stdin.py
+fix*.py
 patch*.py
 
 # 临时工作文件
 work.spec
 work.m5
+tape_bad.m6
 *.tmp
 *.log
 
