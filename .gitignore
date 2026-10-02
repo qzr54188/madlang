@@ -4,16 +4,18 @@ madgen
 *.o
 *.obj
 
-# 一次性补丁脚本
+# 临时文件
+_*.spec
+_*.m6
+_*.out
+_*.expect
+fix*.sh
 fix*.py
 patch*.py
-
-# 临时文件
-out.m6
 *.tmp
 *.log
 
-# Python 缓存（如果还有残留）
+# Python 缓存
 __pycache__/
 *.pyc
 

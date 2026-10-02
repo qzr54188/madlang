@@ -443,13 +443,6 @@ static bool parseFile(const std::string&src,Program&prog,std::string&err){
     vc.cmd=cmd;
     vc.args=args;
     prog.cmds.push_back(vc);
-    // INTERCAL: PLEASE 密度
-    pleaseRecent.push_back(cmd==CMD_PLEASE?1:0);
-    if(pleaseRecent.size()>5)pleaseRecent.erase(pleaseRecent.begin());
-    if((int)pleaseRecent.size()==5){
-      int cnt=0;for(size_t z=0;z<pleaseRecent.size();z++)cnt+=pleaseRecent[z];
-      if(cnt<1){err="最近 5 块必须至少有 1 个 PLEASE";return false;}
-    }
     lastMode=mode;prevSig=sigilVal;prevArgc=(int)args.size();
     blockCount++;
     while(off<(int)lines.size()&&lines[off].empty())off++;
@@ -527,10 +520,6 @@ static std::string argGet(const std::string& a, bool& ok) {
     SLOTS[sl].useCount++;
     return SLOT_VAL.count(sl) ? SLOT_VAL[sl] : "";
   }
-  if (dec.size() == 1 && dec[0] >= 'A' && dec[0] <= 'Z') {
-    if (!VARS.count(dec[0])) { ok = false; return ""; }
-    return VARS[dec[0]];
-  }
   return dec;
 }
 
@@ -548,10 +537,6 @@ static bool argSet(const std::string& a, const std::string& val) {
     SLOT_VAL[sl] = val;
     return true;
   }
-  if (dec.size() == 1 && dec[0] >= 'A' && dec[0] <= 'Z') {
-    VARS[dec[0]] = val;
-    return true;
-  }
   return false;
 }
 
@@ -564,7 +549,6 @@ static std::string simpleArg(const std::string& a) {
   for (size_t i = 0; i < a.size(); i++) if (a[i] < '0' || a[i] > '9') { _allD = false; break; }
   if (_allD) return a;
   std::string dec = b64decode(b64decode(a));
-  if (dec.size() == 1 && dec[0] >= 'A' && dec[0] <= 'Z' && VARS.count(dec[0])) return VARS[dec[0]];
   if (dec.size() >= 2 && dec[0] == ':') {
     std::string n = strToLower(dec.substr(1));
     if (NAME2SLOT.count(n)) {
@@ -646,30 +630,34 @@ static int runProgram(Program&prog){
         if(c.args.size()<2){std::cerr<<"[v6] SET\n";return 1;}
         std::string v=resolveArg(c.args[1],ok);
         if(!ok){std::cerr<<"[v6] 值未定义\n";return 1;}
-        if(c.args[0].size()>=2&&c.args[0][0]==':'){
-          std::string name=strToLower(c.args[0].substr(1));
+        std::string dst;
+        if(c.args[0].size()==1&&c.args[0][0]>='A'&&c.args[0][0]<='Z'){dst=c.args[0];}
+        else dst=b64decode(b64decode(c.args[0]));
+        if(dst.size()>=2&&dst[0]==':'){
+          std::string name=strToLower(dst.substr(1));
           if(!NAME2SLOT.count(name)){std::cerr<<"[v7] 变量未注册: "<<name<<"\n";return 1;}
           int slot=NAME2SLOT[name];
           if(!SLOTS[slot].committed){std::cerr<<"[v7] 未 COMMIT\n";return 1;}
           SLOT_VAL[slot]=v;
-        } else if(c.args[0].size()==1){
-          VARS[c.args[0][0]]=v;
+        } else if(dst.size()==1){
+          VARS[dst[0]]=v;
         } else { std::cerr<<"[v7] 变量名非法\n"; return 1; }
         break;}
       case CMD_INPUT:{
-        if(c.args.empty()||c.args[0].size()!=1){std::cerr<<"[v6] INPUT\n";return 1;}
+        if(c.args.empty()){std::cerr<<"[v6] INPUT\n";return 1;}
         std::string s;std::getline(std::cin,s);
-        VARS[c.args[0][0]]=s;break;}
+        if(!argSet(c.args[0],s)){std::cerr<<"[v7] INPUT 变量非法\n";return 1;}
+        break;}
       case CMD_JUMP:{
         int t=atoi(c.args[0].c_str());
         if(!vm.lineMap.count(t)){std::cerr<<"[v6] 跳转目标不存在\n";return 1;}
         pc=vm.lineMap[t];jumped=true;break;}
       case CMD_IFEQ:{
         if(c.args.size()<3){std::cerr<<"[v6] IFEQ\n";return 1;}
-        char v=c.args[0][0];
+        bool o2; std::string cur=argGet(c.args[0],o2);
         std::string val=resolveArg(c.args[1],ok);
         if(!ok){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        if(VARS.count(v)&&VARS[v]==val){
+        if(o2&&cur==val){
           int t=atoi(c.args[2].c_str());
           if(!vm.lineMap.count(t)){std::cerr<<"[v6] 跳转目标不存在\n";return 1;}
           pc=vm.lineMap[t];jumped=true;
@@ -683,34 +671,35 @@ static int runProgram(Program&prog){
       case CMD_RAND:{
         int max=atoi(c.args[1].c_str());if(max<=0)max=1;
         std::uniform_int_distribution<int>d(0,max-1);
-        VARS[c.args[0][0]]=std::to_string(d(vm.rng));break;}
+        argSet(c.args[0],std::to_string(d(vm.rng)));break;}
       case CMD_ADD:case CMD_SUB:case CMD_MUL:case CMD_DIV:case CMD_MOD:{
-        char v=c.args[0][0];int n=atoi(c.args[1].c_str());
-        int cur=(VARS.count(v)&&!VARS[v].empty())?atoi(VARS[v].c_str()):0;
+        bool o2; std::string curS=argGet(c.args[0],o2);
+        int n=atoi(c.args[1].c_str());
+        int cur=curS.empty()?0:atoi(curS.c_str());
         if(c.cmd==CMD_ADD)cur+=n;
         else if(c.cmd==CMD_SUB)cur-=n;
         else if(c.cmd==CMD_MUL)cur*=n;
         else if(c.cmd==CMD_DIV){if(n==0){std::cerr<<"[v6] 除零\n";return 1;}cur/=n;}
         else{if(n==0){std::cerr<<"[v6] 模零\n";return 1;}cur%=n;}
-        VARS[v]=std::to_string(cur);break;}
-      case CMD_TIME:VARS[c.args[0][0]]=std::to_string((long long)std::time(nullptr));break;
+        argSet(c.args[0],std::to_string(cur));break;}
+      case CMD_TIME:argSet(c.args[0],std::to_string((long long)std::time(nullptr)));break;
       case CMD_MOV:{
-        char d=c.args[0][0],s=c.args[1][0];
-        if(!VARS.count(s)){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        VARS[d]=VARS[s];break;}
+        bool o2; std::string sv=argGet(c.args[1],o2);
+        if(!o2){std::cerr<<"[v6] 变量未定义\n";return 1;}
+        argSet(c.args[0],sv);break;}
       case CMD_CONCAT:{
-        char d=c.args[0][0],s=c.args[1][0];
-        if(!VARS.count(s)){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        VARS[d]+=VARS[s];break;}
+        bool o2; std::string sv=argGet(c.args[1],o2);
+        if(!o2){std::cerr<<"[v6] 变量未定义\n";return 1;}
+        bool o3; std::string dv=argGet(c.args[0],o3);
+        argSet(c.args[0],dv+sv);break;}
       case CMD_LEN:{
-        char d=c.args[0][0],s=c.args[1][0];
-        if(!VARS.count(s)){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        VARS[d]=std::to_string(VARS[s].size());break;}
+        bool o2; std::string sv=argGet(c.args[1],o2);
+        if(!o2){std::cerr<<"[v6] 变量未定义\n";return 1;}
+        argSet(c.args[0],std::to_string(sv.size()));break;}
       case CMD_GT:case CMD_LT:{
-        char a=c.args[0][0],b=c.args[1][0];
+        bool o2,o3; std::string av=argGet(c.args[0],o2); std::string bv=argGet(c.args[1],o3);
         int t=atoi(c.args[2].c_str());
-        long la=VARS.count(a)?atol(VARS[a].c_str()):0;
-        long lb=VARS.count(b)?atol(VARS[b].c_str()):0;
+        long la=atol(av.c_str()); long lb=atol(bv.c_str());
         bool hit=(c.cmd==CMD_GT)?(la>lb):(la<lb);
         if(hit){
           if(!vm.lineMap.count(t)){std::cerr<<"[v6] 跳转目标不存在\n";return 1;}
@@ -718,23 +707,22 @@ static int runProgram(Program&prog){
         }
         break;}
       case CMD_NEQ:{
-        char v=c.args[0][0];
+        bool o2; std::string cur=argGet(c.args[0],o2);
         std::string val=resolveArg(c.args[1],ok);
         if(!ok){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        if(VARS.count(v)&&VARS[v]!=val){
+        if(o2&&cur!=val){
           int t=atoi(c.args[2].c_str());
           if(!vm.lineMap.count(t)){std::cerr<<"[v6] 跳转目标不存在\n";return 1;}
           pc=vm.lineMap[t];jumped=true;
         }
         break;}
       case CMD_PUSH:{
-        char v=c.args[0][0];
-        if(!VARS.count(v)){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        vm.stack.push_back(VARS[v]);break;}
+        bool o2; std::string cur=argGet(c.args[0],o2);
+        if(!o2){std::cerr<<"[v6] 变量未定义\n";return 1;}
+        vm.stack.push_back(cur);break;}
       case CMD_POP:{
-        char v=c.args[0][0];
         if(vm.stack.empty()){std::cerr<<"[v6] 栈空\n";return 1;}
-        VARS[v]=vm.stack.back();vm.stack.pop_back();break;}
+        argSet(c.args[0],vm.stack.back());vm.stack.pop_back();break;}
       case CMD_CALL:{
         int t=atoi(c.args[0].c_str());
         if(!vm.lineMap.count(t)){std::cerr<<"[v6] CALL 目标不存在\n";return 1;}
@@ -749,18 +737,18 @@ static int runProgram(Program&prog){
         std::ifstream f(path.c_str(),std::ios::binary);
         if(!f.good()){std::cerr<<"[v6] 打不开 "<<path<<"\n";return 1;}
         std::stringstream ss;ss<<f.rdbuf();
-        VARS[c.args[0][0]]=ss.str();break;}
+        argSet(c.args[0],ss.str());break;}
       case CMD_WRITEFILE:{
-        char pv=c.args[0][0],cv=c.args[1][0];
-        if(!VARS.count(pv)||!VARS.count(cv)){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        std::ofstream of(VARS[pv].c_str(),std::ios::binary);
-        of.write(VARS[cv].data(),(std::streamsize)VARS[cv].size());break;}
+        bool o2,o3; std::string pv=argGet(c.args[0],o2); std::string cv=argGet(c.args[1],o3);
+        if(!o2||!o3){std::cerr<<"[v6] 变量未定义\n";return 1;}
+        std::ofstream of(pv.c_str(),std::ios::binary);
+        of.write(cv.data(),(std::streamsize)cv.size());break;}
       case CMD_ENV:{
         std::string name=resolveArg(c.args[1],ok);
         if(!ok){std::cerr<<"[v6] 变量未定义\n";return 1;}
         const char*val=std::getenv(name.c_str());
-        VARS[c.args[0][0]]=val?val:"";break;}
-      case CMD_ARGV:VARS[c.args[0][0]]="";break;
+        argSet(c.args[0],val?val:"");break;}
+      case CMD_ARGV:argSet(c.args[0],"");break;
       case CMD_TREAD:{
         if(c.args.size()<2){std::cerr<<"[v6] TREAD\n";return 1;}
         std::string path=c.args[0];
@@ -864,8 +852,8 @@ static int runProgram(Program&prog){
         if(SLOTS[slot].bound){std::cerr<<"[v7] 已 BIND\n";return 1;}
         std::string nm=b64decode(b64decode(c.args[1]));
         if(nm.empty()){std::cerr<<"[v7] 名字空\n";return 1;}
-        int bl=b64len(c.args[1]);
-        if(!isPrimeN(bl)){std::cerr<<"[v7] 名字 base64 长度 "<<bl<<" 不是质数\n";return 1;}
+        int bl=(int)nm.size();
+        if(!isPrimeN(bl)){std::cerr<<"[v7] 名字长度 "<<bl<<" 不是质数\n";return 1;}
         SLOTS[slot].name=nm;SLOTS[slot].bound=true;
         NAME2SLOT[strToLower(nm)]=slot;
         break;}

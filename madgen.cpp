@@ -193,6 +193,14 @@ static bool isAllDigits(const std::string& s) {
     for (size_t i = 0; i < s.size(); i++) if (s[i] < '0' || s[i] > '9') return false;
     return true;
 }
+static bool isAllHex(const std::string& s) {
+    if (s.empty()) return false;
+    for (size_t i = 0; i < s.size(); i++) {
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) return false;
+    }
+    return true;
+}
 static bool isBFPath(const std::string& s) {
     if (s.empty()) return false;
     for (size_t i = 0; i < s.size(); i++) {
@@ -205,7 +213,9 @@ static bool isBFPath(const std::string& s) {
 // v5 参数编码
 static std::string encodeArgV5(const std::string& arg) {
     if (arg.size() == 1 && arg[0] >= 'A' && arg[0] <= 'Z') return arg;
+    if (arg.size() == 2 && arg[0] == '%') return b64x2(arg.substr(1));
     if (isAllDigits(arg)) return arg;
+    if (arg.size() == 2 && isAllHex(arg)) return arg;
     if (arg.size() == 3 && arg[0] == '#' && arg[1] == '$' && arg[2] >= '0' && arg[2] <= '9') {
         return b64x2(arg);
     }
@@ -216,7 +226,9 @@ static std::string encodeArgV5(const std::string& arg) {
 static std::string encodeArgV6(const std::string& arg) {
     if (isBFPath(arg) && !arg.empty()) return "00" + arg;
     if (arg.size() == 1 && arg[0] >= 'A' && arg[0] <= 'Z') return "00" + arg;
+    if (arg.size() == 2 && arg[0] == '%') { std::string _w = arg.substr(1); std::string _b1 = b64encode(_w); std::string _b2 = b64encode(_b1); uint32_t _h = fnv1a(_b2) & 0xFF; char _pfx[4]; snprintf(_pfx, sizeof(_pfx), "%02X", _h); return std::string(_pfx) + _b2; }
     if (isAllDigits(arg)) return "00" + arg;
+    if (arg.size() == 2 && isAllHex(arg)) return "00" + arg;
     std::string raw;
     if (arg.size() == 2 && arg[0] == '$' && arg[1] >= 'A' && arg[1] <= 'Z') raw = "." + arg;
     else raw = decodeEscape(arg);
@@ -335,12 +347,7 @@ static int buildV6(const std::string& specFile, const std::string& outFile) {
     std::vector<std::string> spec;
     if (!readSpec(specFile, spec)) { std::cerr << "打不开 " << specFile << "\n"; return 1; }
 
-    // 每 4 条插一个 PLEASE
-    std::vector<std::string> lines;
-    for (size_t i = 0; i < spec.size(); i++) {
-        if (i % 4 == 0) lines.push_back("PLEASE");
-        lines.push_back(spec[i]);
-    }
+    std::vector<std::string> lines = spec;
 
     std::ostringstream out;
     uint32_t addr = 0x10;
