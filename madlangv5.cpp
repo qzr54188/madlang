@@ -50,6 +50,31 @@ static void genOpTable(){
     used.insert(s);OP_TABLE[md][c]=s;
   }
 }
+static std::string KW_SCHEMA,KW_MEM,KW_STACK,KW_TMP,KW_REG,KW_BODY,KW_END,KW_SEP;
+static void genKeywords(){
+  std::mt19937 rng(0x4B57534Du);
+  std::set<std::string> used;
+  for(int k=0;k<8;k++){
+    int L=(k==7)?7:5;
+    std::string s;
+    do{
+      s="";
+      for(int i=0;i<L;i++){
+        std::uniform_int_distribution<int> dp(0,OPCHARS_N-1);
+        s+=OPCHARS[dp(rng)];
+      }
+    }while(used.count(s));
+    used.insert(s);
+    if(k==0)KW_SCHEMA=s;
+    else if(k==1)KW_MEM=s;
+    else if(k==2)KW_STACK=s;
+    else if(k==3)KW_TMP=s;
+    else if(k==4)KW_REG=s;
+    else if(k==5)KW_BODY=s;
+    else if(k==6)KW_END=s;
+    else KW_SEP=s;
+  }
+}
 static int lookupOp(int mode,const std::string&sym){
   std::string s=sym;
   if(mode>=5){std::string r(s.rbegin(),s.rend());s=r;}
@@ -197,7 +222,23 @@ static bool parseBody(const std::string&body,int schema,int&mode,int&sigilVal,
 
 struct Program{std::vector<V5Cmd>cmds;};
 
-static bool parseFile(const std::string&src,Program&prog,std::string&err){
+static bool parseFile(const std::string&src_raw,Program&prog,std::string&err){
+  std::string src;
+  {
+    std::istringstream iss(src_raw);
+    std::string ln;
+    while(std::getline(iss,ln)){
+      if(ln.size()>KW_SCHEMA.size()&&ln.substr(0,KW_SCHEMA.size())==KW_SCHEMA&&ln[KW_SCHEMA.size()]=='=')ln="@SCHEMA="+ln.substr(KW_SCHEMA.size()+1);
+      else if(ln.size()>KW_MEM.size()&&ln.substr(0,KW_MEM.size())==KW_MEM&&ln[KW_MEM.size()]=='=')ln="@MEM="+ln.substr(KW_MEM.size()+1);
+      else if(ln.size()>KW_STACK.size()&&ln.substr(0,KW_STACK.size())==KW_STACK&&ln[KW_STACK.size()]=='=')ln="@STACK="+ln.substr(KW_STACK.size()+1);
+      else if(ln.size()>KW_TMP.size()&&ln.substr(0,KW_TMP.size())==KW_TMP&&ln[KW_TMP.size()]=='=')ln="@TMP="+ln.substr(KW_TMP.size()+1);
+      else if(ln.size()>KW_REG.size()&&ln.substr(0,KW_REG.size())==KW_REG&&ln[KW_REG.size()]=='=')ln="@REG="+ln.substr(KW_REG.size()+1);
+      else if(ln==KW_BODY)ln="@BODY";
+      else if(ln==KW_END)ln="@END";
+      else if(ln==KW_SEP)ln="---:---";
+      src+=ln+"\n";
+    }
+  }
   std::vector<std::string> lines;
   std::istringstream ss(src);std::string ln;
   while(std::getline(ss,ln)){if(!ln.empty()&&ln.back()=='\r')ln.pop_back();lines.push_back(ln);}
@@ -404,10 +445,22 @@ static int runProgram(Program&prog,const std::string&stdin_data){
 
 int main(int argc,char**argv){
   genOpTable();
+  genKeywords();
   if(argc<2){
     std::cout<<"MADLANG v5\n";
     std::cout<<"用法: madlangv5 <file.m5>\n";
     std::cout<<"      madlangv5 --map   打印 10 模式 op 表\n";
+    return 0;
+  }
+  if(std::string(argv[1])=="--keywords"){
+    std::cout<<"SCHEMA="<<KW_SCHEMA<<"\n";
+    std::cout<<"MEM="<<KW_MEM<<"\n";
+    std::cout<<"STACK="<<KW_STACK<<"\n";
+    std::cout<<"TMP="<<KW_TMP<<"\n";
+    std::cout<<"REG="<<KW_REG<<"\n";
+    std::cout<<"BODY="<<KW_BODY<<"\n";
+    std::cout<<"END="<<KW_END<<"\n";
+    std::cout<<"SEP="<<KW_SEP<<"\n";
     return 0;
   }
   if(std::string(argv[1])=="--map"){

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# mad5gen.py - 从简单描述生成 v5 源文件（v4 混淆叠加版）
-# 用法: mad5gen.py <spec.txt> <out.m5>
+# mad5gen.py - v5 生成器（v4 混淆 + 声明块关键字混淆）
 import sys, os, subprocess, base64
 
 def load_ops(bin_path):
@@ -21,6 +20,16 @@ def load_ops(bin_path):
             table[(mode, cmd)] = op
     return table
 
+def load_kw(bin_path):
+    out = subprocess.check_output([bin_path, '--keywords']).decode('utf-8', errors='replace')
+    kw = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if '=' not in line: continue
+        k, v = line.split('=', 1)
+        kw[k] = v
+    return kw
+
 SIGS = "@%&*"
 SCHEMAS = [
     (None, None, None, None, '|'), (None, None, '[', ']', None),
@@ -33,7 +42,6 @@ SCHEMAS = [
     (None, None, None, None, '*'), (None, None, None, None, '?'),
 ]
 
-# spec 里的 ~s ~t 等转义，解码成真字符（在 base64 之前）
 def decode_spec_escape(s):
     out = []
     i = 0
@@ -46,9 +54,7 @@ def decode_spec_escape(s):
             out.append(s[i]); i += 1
     return ''.join(out)
 
-# 参数双重 base64 编码
 def encode_arg(arg):
-    # 保留变量引用 #$X 的形式（但依然双重 base64）
     if len(arg) == 3 and arg[0] == '#' and arg[1] == '$' and arg[2].isdigit():
         raw = arg
     else:
@@ -82,6 +88,7 @@ def main():
     if not os.path.exists(bin5):
         print("找不到 " + bin5, file=sys.stderr); sys.exit(1)
     OP = load_ops(bin5)
+    KW = load_kw(bin5)
 
     lines = []
     with open(spec_file) as f:
@@ -120,15 +127,15 @@ def main():
         body = pre + body_tail
         blen = len(body)
         addr_end = addr + blen
-        output.append("@SCHEMA=" + format(schema, 'X'))
-        output.append("@MEM=" + format(addr, '04X') + "-" + format(addr_end, '04X'))
-        output.append("@STACK=2")
-        output.append("@TMP=1")
-        output.append("@REG=N/N")
-        output.append("@BODY")
+        output.append(KW['SCHEMA'] + "=" + format(schema, 'X'))
+        output.append(KW['MEM'] + "=" + format(addr, '04X') + "-" + format(addr_end, '04X'))
+        output.append(KW['STACK'] + "=2")
+        output.append(KW['TMP'] + "=1")
+        output.append(KW['REG'] + "=N/N")
+        output.append(KW['BODY'])
         output.append(body)
-        output.append("@END")
-        output.append("---:---")
+        output.append(KW['END'])
+        output.append(KW['SEP'])
         output.append("")
         last_mode = mode
         last_sig_val = sig_val

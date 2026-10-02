@@ -1,2 +1,0 @@
-PRINTLN Hello~sWorldX
-HALT

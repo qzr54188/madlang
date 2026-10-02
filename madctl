@@ -1,84 +1,63 @@
 #!/bin/bash
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
-MADLANG="$DIR/madlang"
-MADLANGC="$DIR/madlangc"
-need_bin() { [ -x "$MADLANG" ] || { echo "先跑: madctl compile" >&2; exit 1; }; }
-need_c()   { [ -x "$MADLANGC" ] || { echo "先跑: madctl ccompile" >&2; exit 1; }; }
+V5="$DIR/madlangv5"
+GEN="$DIR/mad5gen.py"
+
+need_bin() { [ -x "$V5" ] || { echo "先跑: madctl compile" >&2; exit 1; }; }
+
 case "${1:-help}" in
   compile)
-    g++ -std=c++11 -O2 -pthread -o "$MADLANG" "$DIR/madlang.cpp"
-    echo "[madctl] 解释器编译完成 → $MADLANG"
+    g++ -std=c++11 -O2 -pthread -o "$V5" "$DIR/madlangv5.cpp"
+    echo "[madctl] v5 解释器编译完成 → $V5"
     ;;
-  ccompile)
-    g++ -std=c++11 -O2 -o "$MADLANGC" "$DIR/madlangc.cpp"
-    echo "[madctl] 编译器编译完成 → $MADLANGC"
-    ;;
-  web)
-    PORT="${2:-8765}"
-    exec python3 "$DIR/madweb.py" "$PORT"
+  gen)
+    [ -z "${2:-}" ] && { echo "用法: madctl gen <spec> [out.m5]"; exit 1; }
+    SRC="$2"; [ -f "$SRC" ] || SRC="$DIR/$2"
+    [ -f "$SRC" ] || { echo "找不到: $2"; exit 1; }
+    OUT="${3:-${SRC%.spec}.m5}"
+    python3 "$GEN" "$SRC" "$OUT"
     ;;
   run)
-    need_bin; [ -z "${2:-}" ] && { echo "用法: madctl run <file.mgl>"; exit 1; }
-    cd "$DIR"; exec "$MADLANG" "$2"
-    ;;
-  cc)
-    need_c; [ -z "${2:-}" ] && { echo "用法: madctl cc <file.mgl>"; exit 1; }
+    need_bin; [ -z "${2:-}" ] && { echo "用法: madctl run <file.m5>"; exit 1; }
     SRC="$2"; [ -f "$SRC" ] || SRC="$DIR/$2"
     [ -f "$SRC" ] || { echo "找不到: $2"; exit 1; }
-    OUT="${SRC%.mgl}"
-    echo "[madctl] cc: $SRC → $OUT"
-    "$MADLANGC" "$SRC" "$OUT.cpp" || exit 1
-    g++ -std=c++11 -O2 -o "$OUT" "$OUT.cpp" || exit 1
-    echo "[madctl] 完成: $OUT ($(stat -c%s "$OUT" 2>/dev/null || echo ?) bytes)"
+    exec "$V5" "$SRC"
     ;;
-  build)
-    need_bin; [ -z "${2:-}" ] && { echo "用法: madctl build <file.mgl> [name]"; exit 1; }
+  do)
+    need_bin; [ -z "${2:-}" ] && { echo "用法: madctl do <spec>"; exit 1; }
     SRC="$2"; [ -f "$SRC" ] || SRC="$DIR/$2"
     [ -f "$SRC" ] || { echo "找不到: $2"; exit 1; }
-    NAME="${3:-$(basename "$SRC" .mgl)}"
-    OUT="$DIR/$NAME.bundle"
-    {
-      echo '#!/bin/bash'
-      echo 'TMP="$(mktemp -d)"; trap '"'"'rm -rf "$TMP"'"'"' EXIT'
-      echo 'base64 -d > "$TMP/madlang" <<_E1'
-      base64 "$MADLANG"
-      echo '_E1'
-      echo 'chmod +x "$TMP/madlang"'
-      echo 'base64 -d > "$TMP/prog.mgl" <<_E2'
-      base64 "$SRC"
-      echo '_E2'
-      echo 'exec "$TMP/madlang" "$TMP/prog.mgl" "$@"'
-    } > "$OUT"
-    chmod +x "$OUT"
-    echo "[madctl] 打包完成 → $OUT"
+    OUT="${SRC%.spec}.m5"
+    echo "=== [1/3] 生成 $OUT ==="
+    python3 "$GEN" "$SRC" "$OUT" || exit 1
+    echo "=== [2/3] 文件内容 ==="
+    cat "$OUT"
+    echo "=== [3/3] 运行 ==="
+    "$V5" "$OUT" < /dev/null
     ;;
-  repl) [ -x "$DIR/madrepl" ] || { echo "先跑: madctl rcompile"; exit 1; }; cd "$DIR"; exec "$DIR/madrepl" ;;
-  rcompile)
-    g++ -std=c++11 -O2 -pthread -o "$DIR/madrepl" "$DIR/madrepl.cpp"
-    echo "[madctl] REPL 编译完成 → $DIR/madrepl"
-    ;;
-  regen) need_bin; cd "$DIR"; exec "$MADLANG" --regen ;;
+  map) need_bin; exec "$V5" --map ;;
+  kw)  need_bin; exec "$V5" --keywords ;;
   info)
-    echo "== MADLANG 工具链 =="
+    echo "== MADLANG v5 工具链 =="
     echo "目录:      $DIR"
-    [ -x "$MADLANG" ] && echo "解释器:    ✓" || echo "解释器:    ✗"
-    [ -x "$MADLANGC" ] && echo "编译器:    ✓" || echo "编译器:    ✗"
-    [ -f "$DIR/madweb.py" ] && echo "Web IDE:   ✓" || echo "Web IDE:   ✗"
-    [ -x "$DIR/madrepl" ] && echo "REPL:      ✓" || echo "REPL:      ✗"
-    [ -f "$DIR/MADLANG_DOC.md" ] && echo "文档:      ✓" || echo "文档:      ✗"
-    echo "示例:      $(ls "$DIR/examples"/*.mgl 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
-    echo "打包:      $(ls "$DIR"/*.bundle 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    [ -x "$V5" ] && echo "解释器:    ✓ ($(stat -c%s "$V5" 2>/dev/null) bytes)" || echo "解释器:    ✗ 未编译"
+    [ -f "$GEN" ] && echo "生成器:    ✓ mad5gen.py" || echo "生成器:    ✗"
+    [ -f "$DIR/madlangv5.cpp" ] && echo "源码:      ✓ madlangv5.cpp ($(wc -l < "$DIR/madlangv5.cpp") 行)" || echo "源码:      ✗"
+    echo "spec 文件: $(ls "$DIR"/*.spec 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    echo "m5 文件:   $(ls "$DIR"/*.m5 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
     ;;
   *)
-    echo "命令:"
-    echo "  madctl compile        编译解释器 madlang"
-    echo "  madctl ccompile       编译编译器 madlangc"
-    echo "  madctl web [port]     启动 Web Studio (默认 8765)"
-    echo "  madctl run <f.mgl>    解释运行"
-    echo "  madctl cc <f.mgl>     编译成原生二进制"
-    echo "  madctl build <f.mgl>  打包成 .bundle"
-    echo "  madctl regen          重建文档和示例"
-    echo "  madctl info           状态一览"
+    echo ""
+    echo "  MADLANG v5 工具链"
+    echo "  ─────────────────────────────────"
+    echo "  madctl compile            编译 v5 解释器"
+    echo "  madctl gen <spec> [out]   从 spec 生成 .m5"
+    echo "  madctl run <file.m5>      运行 .m5"
+    echo "  madctl do <spec>          一键：生成→显示→运行"
+    echo "  madctl map                查看 10 模式 op 表（300 条）"
+    echo "  madctl kw                 查看混淆关键字"
+    echo "  madctl info               状态一览"
+    echo ""
     ;;
 esac
