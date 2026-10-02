@@ -1,63 +1,71 @@
 #!/bin/bash
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
-V5="$DIR/madlangv5"
-GEN="$DIR/mad5gen.py"
+V7="$DIR/madlangv7"
+GEN="$DIR/madgen"
 
-need_bin() { [ -x "$V5" ] || { echo "先跑: madctl compile" >&2; exit 1; }; }
+need_bin() { [ -x "$V7" ] || { echo "先跑: madctl compile" >&2; exit 1; }; }
+need_gen() { [ -x "$GEN" ] || { echo "先跑: madctl compile" >&2; exit 1; }; }
 
 case "${1:-help}" in
   compile)
-    g++ -std=c++11 -O2 -pthread -o "$V5" "$DIR/madlangv5.cpp"
-    echo "[madctl] v5 解释器编译完成 → $V5"
+    g++ -std=c++11 -O2 -pthread -o "$V7" "$DIR/madlangv7.cpp"
+    echo "[madctl] 解释器编译完成 → madlangv7"
+    g++ -std=c++11 -O2 -o "$GEN" "$DIR/madgen.cpp"
+    echo "[madctl] 生成器编译完成 → madgen"
     ;;
   gen)
-    [ -z "${2:-}" ] && { echo "用法: madctl gen <spec> [out.m5]"; exit 1; }
+    need_gen; [ -z "${2:-}" ] && { echo "用法: madctl gen <spec> [out.m6]"; exit 1; }
     SRC="$2"; [ -f "$SRC" ] || SRC="$DIR/$2"
     [ -f "$SRC" ] || { echo "找不到: $2"; exit 1; }
-    OUT="${3:-${SRC%.spec}.m5}"
-    python3 "$GEN" "$SRC" "$OUT"
+    OUT="${3:-${SRC%.spec}.m6}"
+    "$GEN" v6 "$SRC" "$OUT"
     ;;
   run)
-    need_bin; [ -z "${2:-}" ] && { echo "用法: madctl run <file.m5>"; exit 1; }
+    need_bin; [ -z "${2:-}" ] && { echo "用法: madctl run <file.m6>"; exit 1; }
     SRC="$2"; [ -f "$SRC" ] || SRC="$DIR/$2"
     [ -f "$SRC" ] || { echo "找不到: $2"; exit 1; }
-    exec "$V5" "$SRC"
+    exec "$V7" "$SRC"
     ;;
   do)
-    need_bin; [ -z "${2:-}" ] && { echo "用法: madctl do <spec>"; exit 1; }
+    need_bin; need_gen
+    [ -z "${2:-}" ] && { echo "用法: madctl do <spec>"; exit 1; }
     SRC="$2"; [ -f "$SRC" ] || SRC="$DIR/$2"
     [ -f "$SRC" ] || { echo "找不到: $2"; exit 1; }
-    OUT="${SRC%.spec}.m5"
+    OUT="${SRC%.spec}.m6"
     echo "=== [1/3] 生成 $OUT ==="
-    python3 "$GEN" "$SRC" "$OUT" || exit 1
-    echo "=== [2/3] 文件内容 ==="
-    cat "$OUT"
+    "$GEN" v6 "$SRC" "$OUT" || exit 1
+    echo "=== [2/3] 文件行数 ==="
+    wc -l "$OUT"
     echo "=== [3/3] 运行 ==="
-    "$V5" "$OUT" < /dev/null
+    "$V7" "$OUT" < /dev/null
     ;;
-  map) need_bin; exec "$V5" --map ;;
-  kw)  need_bin; exec "$V5" --keywords ;;
   info)
-    echo "== MADLANG v5 工具链 =="
+    echo "== MADLANG v7 工具链 =="
     echo "目录:      $DIR"
-    [ -x "$V5" ] && echo "解释器:    ✓ ($(stat -c%s "$V5" 2>/dev/null) bytes)" || echo "解释器:    ✗ 未编译"
-    [ -f "$GEN" ] && echo "生成器:    ✓ mad5gen.py" || echo "生成器:    ✗"
-    [ -f "$DIR/madlangv5.cpp" ] && echo "源码:      ✓ madlangv5.cpp ($(wc -l < "$DIR/madlangv5.cpp") 行)" || echo "源码:      ✗"
-    echo "spec 文件: $(ls "$DIR"/*.spec 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
-    echo "m5 文件:   $(ls "$DIR"/*.m5 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    [ -x "$V7" ] && echo "解释器:    ✓ ($(stat -c%s "$V7" 2>/dev/null) bytes)" || echo "解释器:    ✗ 未编译"
+    [ -x "$GEN" ] && echo "生成器:    ✓ ($(stat -c%s "$GEN" 2>/dev/null) bytes)" || echo "生成器:    ✗ 未编译"
+    [ -f "$DIR/madlangv7.cpp" ] && echo "源码:      ✓ ($(wc -l < "$DIR/madlangv7.cpp") 行)" || echo "源码:      ✗"
+    echo "spec:      $(ls "$DIR"/*.spec 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    echo "m6:        $(ls "$DIR"/*.m6 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    ;;
+  push)
+    msg="${2:-update}"
+    cd "$DIR"
+    git add -A
+    git commit -m "$msg"
+    git push
     ;;
   *)
     echo ""
-    echo "  MADLANG v5 工具链"
+    echo "  MADLANG v7 工具链"
     echo "  ─────────────────────────────────"
-    echo "  madctl compile            编译 v5 解释器"
-    echo "  madctl gen <spec> [out]   从 spec 生成 .m5"
-    echo "  madctl run <file.m5>      运行 .m5"
-    echo "  madctl do <spec>          一键：生成→显示→运行"
-    echo "  madctl map                查看 10 模式 op 表（300 条）"
-    echo "  madctl kw                 查看混淆关键字"
-    echo "  madctl info               状态一览"
+    echo "  madctl compile            编译解释器 + 生成器"
+    echo "  madctl gen <spec> [out]   生成 .m6"
+    echo "  madctl run <file.m6>      运行"
+    echo "  madctl do <spec>          一键：生成 + 显示行数 + 运行"
+    echo "  madctl info               工具链状态"
+    echo "  madctl push [msg]         git 提交并推送"
     echo ""
     ;;
 esac

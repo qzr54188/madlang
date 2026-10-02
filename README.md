@@ -2,78 +2,89 @@
 
 **一门故意难读难写的编程语言。** 纯语法地狱，不是加密，但比加密更难读。
 
-## 版本
+## 当前版本：v7.0.0
 
-| 版本 | 定位 | 难度 |
-|------|------|------|
-| v5 | 10 层语法地狱 | ★★★★ |
-| **v6** | **13 层 + 6 语言融合** | ★★★★★ |
+- **解释器**：C++（单二进制，无依赖）
+- **生成器**：C++（不再依赖 Python）
+- **命令数**：101 条
+- **语法层**：13 层地狱（哈希链 + 2D 纸带 + 6 语言融合）
 
-## v6：集大成者
+## v7 特性
 
-融合 **Brainfuck / Befunge / Whitespace / Malbolge / INTERCAL / Unlambda / Shakespeare**。
+### 101 条命令，9 大类
 
-### 6 语言借鉴
+| 类 | 数量 | 例子 |
+|----|------|------|
+| 基础 | 30 | PRINT / SET / JUMP / ADD / CALL |
+| 纸带 | 2 | TREAD / TWRITE（Brainfuck 风格）|
+| 流程 | 8 | COMEFROM / CMP / JE / JL / JNZ / NOP |
+| 变量注册 | 8 | DIM / DECL / BIND / SALT / CHK / COMMIT / REFRESH / UNSET |
+| 字符串 | 13 | STR_LEN / STR_AT / STR_SUB / STR_FIND / STR_REPL / CHR / ORD |
+| 列表 | 8 | LST_NEW / LST_PUSH / LST_POP / LST_GET / LST_SET / LST_LEN |
+| 数学 | 13 | SIN / COS / SQRT / POW / LOG / ABS / FLOOR / MIN / MAX |
+| 绘图 | 10 | GOTO / COLOR / DRAW_HLINE / DRAW_BOX / CLR_SCREEN |
+| 文件 | 10 | F_OPEN / F_READ / F_WRITE / DIR_LIST / FILE_DEL |
+| 时间 | 4 | TIME_MS / TIME_NS / TIME_FMT / SLEEP_MS |
 
-| 语言 | 借鉴 | 实现 |
-|------|------|------|
-| Brainfuck | 纸带 + 指针 | `TREAD` / `TWRITE` + `>>v+` 路径 |
-| Befunge | 2D + 方向 | 纸带 16×16，路径有 `<>^v` |
-| Whitespace | 缩进有语义 | 每块前导 tab 数 = 深度（0-3）|
-| Malbolge | 自修改 | `MUT=NO/OK` 声明 |
-| INTERCAL | PLEASE + COME FROM | 每 4 块至少 1 个 PLEASE |
-| Unlambda | 组合子前缀 | `.$X` 前缀访问变量 |
-| Shakespeare | 场景 + 人物 | `SCENE:I` / `WHO:main` / `WHERE:0,0` |
+### 融合的语言
 
-### 每块 14 行结构
+| 语言 | 借鉴 |
+|------|------|
+| Brainfuck | 纸带 + 指针（TREAD/TWRITE）|
+| Befunge | 2D 格子 + 方向 |
+| Whitespace | 缩进有语义（tab 深度 0-3）|
+| Malbolge | 自修改代码（MUT=NO/OK）|
+| INTERCAL | PLEASE 密度 + COMEFROM |
+| Unlambda | 组合子前缀（.$X）|
+| Shakespeare | 场景声明（SCENE/WHO/WHERE）|
 
-```
+### 命名变量系统
 
-0OZSZ:I              ← SCENE
-Bl0IS:main           ← WHO
-I5SI2:0,0            ← WHERE
-01Bq5=NO             ← MUT
-2Q05q=?              ← SCHEMA
-IS8Oq=0010-0036      ← MEM
-q0SqI=2              ← STACK
-8I18S=1              ← TMP
-BB00O=N/N            ← REG
-OOQS2=0858F950       ← @H 本块哈希（v6 新增）
-ISq21                ← BODY
-%1{0}l0|00A|0AU0...  ← 正文
-SqlBq                ← END
-55BBl=00000000       ← @P 上一块哈希（v6 新增）
-QQ1IBq2              ← SEP
+不用 `A`-`Z` 了。可以定义任意名字，但**每个新变量要 6 步注册**：
 
 ```
 
-**哈希链**：`@H` 是本块 FNV-1a 32 位哈希，`@P` 是上一块哈希。改一个字符 → 哈希不符 → 编译失败。
+DIM 1
+DECL 1 T
+BIND 1 YzJOdmNtVT0=
+SALT 1
+CHK 1 1D
+COMMIT 1
+
+```
+
+- `DIM` — 占槽位（必须连续）
+- `DECL` — 声明类型 T/N/L
+- `BIND` — 绑定名字（名字 base64 后长度必须质数）
+- `SALT` — 加盐（槽位²）
+- `CHK` — 校验和（名字 ASCII 累加 + 槽位，mod 256）
+- `COMMIT` — 提交
+
+**少一步 = 报错。** 用 100 次后过期，要 `REFRESH` 续期。
+
+### 哈希链
+
+每块尾部有 `@H`（本块 FNV-1a 32 位哈希），下一块头部有 `@P`（上一块的哈希）。
+
+**改一个字符 → 哈希不符 → 编译失败。**
 
 ## 快速开始
 
-    # 编译 v5
-    g++ -std=c++11 -O2 -pthread -o madlangv5 madlangv5.cpp
-    # 编译 v6
-    g++ -std=c++11 -O2 -pthread -o madlangv6 madlangv6.cpp
-    # 编译 TUI
-    g++ -std=c++11 -O2 -o mad6 mad6.cpp
+    ./madctl compile        # 编译解释器 + 生成器
+    ./madctl do v7test.spec # 一键：生成 + 显示 + 运行
+    ./madctl run v7test.m6  # 直接运行
 
-    # v5 用法
-    python3 mad5gen.py hello5.spec hello5.m5
-    ./madlangv5 hello5.m5
+## 工具链
 
-    # v6 用法
-    python3 mad6gen.py tape.spec tape.m6
-    ./madlangv6 tape.m6
-
-## 示例
-
-| 文件 | 说明 | 版本 |
+| 工具 | 语言 | 作用 |
 |------|------|------|
-| `hello5.spec` | Hello World | v5 |
-| `pingpong.spec` | 乒乓动画 | v5 |
-| `hitmouse.spec` | 打地鼠 | v5 |
-| `tape.spec` | 纸带读写测试 | v6 |
+| `madlangv7` | C++ | 解释器（101 命令）|
+| `madgen` | C++ | 生成器（spec → .m6）|
+| `madctl` | Bash | 一键脚本 |
+| `madlangv7.cpp` | C++ | 解释器源码 |
+| `madgen.cpp` | C++ | 生成器源码 |
+
+**全部 C++。没有任何 Python 依赖。**
 
 ## spec 语法
 
@@ -83,48 +94,21 @@ QQ1IBq2              ← SEP
 
 参数规则：
 
-- 单字符 `A`-`Z` → 变量名（不编码）
-- 纯数字 → 数值参数（不编码）
-- BF 路径（`<>^v+-`）→ 原样（v6）
+- 单字符 `A`-`Z` → 变量名
+- 纯数字 → 数值
+- BF 路径（`<>^v+-@`）→ 纸带路径（v7 专用）
 - `$X` → 变量引用（双重 base64）
 
-命令（35 条）：PRINT / PRINTLN / SET / INPUT / JUMP / IFEQ / CLEAR / SLEEP / HALT
-RAND / ADD / SUB / MUL / DIV / MOD / TIME
-MOV / CONCAT / LEN / GT / LT / NEQ / PUSH / POP
-CALL / RET / READFILE / WRITEFILE / ENV / ARGV
-TREAD / TWRITE / COMEFROM / PLEASE
+## 编译链路
 
-## 工具链
+    spec.txt ──madgen──▶ .m6 ──madlangv7──▶ 输出
 
-| 工具 | 作用 |
-|------|------|
-| `madlangv5` | v5 解释器 |
-| `madlangv6` | v6 解释器 |
-| `mad5gen.py` | v5 生成器（spec → .m5）|
-| `mad6gen.py` | v6 生成器（spec → .m6）|
-| `madctl` | 一键脚本 |
-| `mad6.cpp` | TUI 启动器（简单/困难/终端/工具）|
-
-## Hello World 对照
-
-**spec（人类可读）**：
-```
-
-PRINTLN Hello~sWorld
-HALT
-
-```
-
-**v5 生成（.m5，20 行）**：10 层地狱
-
-**v6 生成（.m6，127 行）**：13 层地狱 + 哈希链 + 场景声明
-
-**Python**：`print("Hello World")`
+**没有任何加密。** 你能一行一行读，但读一行的前提是先把前面所有块读懂。
 
 ## 依赖
 
 - g++ / clang++（C++11）
-- python3（生成器）
+- 就这一个
 
 ## 许可
 

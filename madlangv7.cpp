@@ -32,12 +32,38 @@ enum {CMD_PRINT=0,CMD_PRINTLN,CMD_SET,CMD_INPUT,CMD_JUMP,CMD_IFEQ,
   CMD_GT,CMD_LT,CMD_NEQ,CMD_PUSH,CMD_POP,CMD_CALL,CMD_RET,
   CMD_WRITEFILE,CMD_ENV,CMD_ARGV,CMD_TREAD,CMD_TWRITE,
   CMD_COMEFROM,CMD_PLEASE,
+  CMD_DIM,CMD_DECL,CMD_BIND,CMD_SALT,CMD_CHK,CMD_COMMIT,CMD_REFRESH,CMD_UNSET,
+  CMD_STR_LEN,CMD_STR_AT,CMD_STR_SUB,CMD_STR_FIND,CMD_STR_SPLIT,
+  CMD_STR_UPPER,CMD_STR_LOWER,CMD_STR_TRIM,CMD_STR_REPL,CMD_STR_STARTS,CMD_STR_ENDS,
+  CMD_CHR,CMD_ORD,
+  CMD_LST_NEW,CMD_LST_PUSH,CMD_LST_POP,CMD_LST_GET,CMD_LST_SET,CMD_LST_LEN,CMD_LST_DEL,CMD_LST_INS,
+  CMD_SIN,CMD_COS,CMD_TAN,CMD_SQRT,CMD_POW,CMD_LOG,CMD_EXP,CMD_ABS,
+  CMD_FLOOR,CMD_CEIL,CMD_ROUND,CMD_MIN,CMD_MAX,
+  CMD_GOTO,CMD_COLOR,CMD_BGCOLOR,CMD_CLR_LINE,CMD_CLR_SCREEN,
+  CMD_DRAW_CH,CMD_DRAW_STR,CMD_DRAW_HLINE,CMD_DRAW_VLINE,CMD_DRAW_BOX,
+  CMD_F_OPEN,CMD_F_CLOSE,CMD_F_READ,CMD_F_READLN,CMD_F_WRITE,
+  CMD_F_SEEK,CMD_F_TELL,CMD_DIR_LIST,CMD_FILE_DEL,CMD_FILE_REN,
+  CMD_CMP,CMD_CMP_IMM,CMD_JE,CMD_JNE,CMD_JL,CMD_JG,CMD_JZ,CMD_JNZ,
+  CMD_NOP,CMD_LOAD,CMD_STORE,CMD_OUT,CMD_OUT_LN,
+  CMD_TIME_MS,CMD_TIME_NS,CMD_TIME_FMT,CMD_SLEEP_MS,
   CMD_COUNT};
 static const char* CMD_NAMES[CMD_COUNT]={
   "PRINT","PRINTLN","SET","INPUT","JUMP","IFEQ","CLEAR","SLEEP","HALT","RAND",
   "ADD","SUB","READFILE","TIME","MOV","CONCAT","LEN","MUL","DIV","MOD",
   "GT","LT","NEQ","PUSH","POP","CALL","RET","WRITEFILE","ENV","ARGV",
-  "TREAD","TWRITE","COMEFROM","PLEASE"};
+  "TREAD","TWRITE","COMEFROM","PLEASE",
+  "DIM","DECL","BIND","SALT","CHK","COMMIT","REFRESH","UNSET",
+  "STR_LEN","STR_AT","STR_SUB","STR_FIND","STR_SPLIT",
+  "STR_UPPER","STR_LOWER","STR_TRIM","STR_REPL","STR_STARTS","STR_ENDS",
+  "CHR","ORD",
+  "LST_NEW","LST_PUSH","LST_POP","LST_GET","LST_SET","LST_LEN","LST_DEL","LST_INS",
+  "SIN","COS","TAN","SQRT","POW","LOG","EXP","ABS","FLOOR","CEIL","ROUND","MIN","MAX",
+  "GOTO","COLOR","BGCOLOR","CLR_LINE","CLR_SCREEN",
+  "DRAW_CH","DRAW_STR","DRAW_HLINE","DRAW_VLINE","DRAW_BOX",
+  "F_OPEN","F_CLOSE","F_READ","F_READLN","F_WRITE","F_SEEK","F_TELL",
+  "DIR_LIST","FILE_DEL","FILE_REN",
+  "CMP","CMP_IMM","JE","JNE","JL","JG","JZ","JNZ","NOP","LOAD","STORE","OUT","OUT_LN",
+  "TIME_MS","TIME_NS","TIME_FMT","SLEEP_MS"};
 
 static std::string OP_TABLE[10][CMD_COUNT];
 static const char OPCHARS[]="Il1O0S5Z2B8Qq";
@@ -433,13 +459,158 @@ static bool parseFile(const std::string&src,Program&prog,std::string&err){
 }
 
 static std::map<char,std::string> VARS;
+
+// ============ v7: 命名变量系统 ============
+struct VarSlot {
+  std::string name;    // 原样名字
+  int type;            // 0=TEXT 1=NUM 2=LIST
+  int checksum;        // 提交的校验和
+  int salt;            // 槽位²
+  int useCount;        // 使用次数
+  bool dimmed, declared, bound, salted, chked, committed;
+  VarSlot() : type(0), checksum(0), salt(0), useCount(0),
+              dimmed(false), declared(false), bound(false),
+              salted(false), chked(false), committed(false) {}
+};
+static std::map<int, VarSlot> SLOTS;
+static std::map<std::string, int> NAME2SLOT;
+static std::map<int, std::string> SLOT_VAL;
+static int NEXT_SLOT = 1;
+static const int USE_LIMIT = 100;
+static std::string strToLower(const std::string& in) {
+  std::string o = in;
+  for (size_t i = 0; i < o.size(); i++)
+    if (o[i] >= 'A' && o[i] <= 'Z') o[i] += 32;
+  return o;
+}
+static int b64len(const std::string& s) {
+  // base64 解码后的字节数（估算，忽略填充）
+  int n = (int)s.size();
+  while (n > 0 && s[n-1] == '=') n--;
+  return n * 3 / 4;
+}
+static bool isPrimeN(int n) {
+  if (n < 2) return false;
+  for (int i = 2; i*i <= n; i++) if (n % i == 0) return false;
+  return true;
+}
+static std::string slotErr(int slot) {
+  char b[64]; snprintf(b, sizeof(b), "槽位 %d", slot); return b;
+}
+static bool requireSlot(int slot, bool committed, std::string& err) {
+  if (!SLOTS.count(slot)) { err = slotErr(slot) + " 未 DIM"; return false; }
+  if (committed && !SLOTS[slot].committed) { err = slotErr(slot) + " 未 COMMIT"; return false; }
+  return true;
+}
+static std::map<char, std::vector<std::string> > LISTS;
+static std::map<char, std::ifstream*> FIN;
+static std::map<char, std::ofstream*> FOUT;
+static int g_cmpFlag = 0;
+static std::string g_acc;
+
+static std::string argGet(const std::string& a, bool& ok) {
+  ok = true;
+  if (a.size() == 1 && a[0] >= 'A' && a[0] <= 'Z') {
+    if (!VARS.count(a[0])) { ok = false; return ""; }
+    return VARS[a[0]];
+  }
+  bool _allD = !a.empty();
+  for (size_t i = 0; i < a.size(); i++) if (a[i] < '0' || a[i] > '9') { _allD = false; break; }
+  if (_allD) return a;
+  std::string dec = b64decode(b64decode(a));
+  if (dec.size() >= 2 && dec[0] == ':') {
+    std::string n = strToLower(dec.substr(1));
+    if (!NAME2SLOT.count(n)) { ok = false; return ""; }
+    int sl = NAME2SLOT[n];
+    if (!SLOTS.count(sl) || !SLOTS[sl].committed) { ok = false; return ""; }
+    if (SLOTS[sl].useCount >= USE_LIMIT) { ok = false; return ""; }
+    SLOTS[sl].useCount++;
+    return SLOT_VAL.count(sl) ? SLOT_VAL[sl] : "";
+  }
+  if (dec.size() == 1 && dec[0] >= 'A' && dec[0] <= 'Z') {
+    if (!VARS.count(dec[0])) { ok = false; return ""; }
+    return VARS[dec[0]];
+  }
+  return dec;
+}
+
+static bool argSet(const std::string& a, const std::string& val) {
+  if (a.size() == 1 && a[0] >= 'A' && a[0] <= 'Z') {
+    VARS[a[0]] = val;
+    return true;
+  }
+  std::string dec = b64decode(b64decode(a));
+  if (dec.size() >= 2 && dec[0] == ':') {
+    std::string n = strToLower(dec.substr(1));
+    if (!NAME2SLOT.count(n)) return false;
+    int sl = NAME2SLOT[n];
+    if (!SLOTS.count(sl) || !SLOTS[sl].committed) return false;
+    SLOT_VAL[sl] = val;
+    return true;
+  }
+  if (dec.size() == 1 && dec[0] >= 'A' && dec[0] <= 'Z') {
+    VARS[dec[0]] = val;
+    return true;
+  }
+  return false;
+}
+
+static std::string simpleArg(const std::string& a) {
+  if (a.size() == 1 && a[0] >= 'A' && a[0] <= 'Z') {
+    if (VARS.count(a[0])) return VARS[a[0]];
+    return a;
+  }
+  bool _allD = !a.empty();
+  for (size_t i = 0; i < a.size(); i++) if (a[i] < '0' || a[i] > '9') { _allD = false; break; }
+  if (_allD) return a;
+  std::string dec = b64decode(b64decode(a));
+  if (dec.size() == 1 && dec[0] >= 'A' && dec[0] <= 'Z' && VARS.count(dec[0])) return VARS[dec[0]];
+  if (dec.size() >= 2 && dec[0] == ':') {
+    std::string n = strToLower(dec.substr(1));
+    if (NAME2SLOT.count(n)) {
+      int sl = NAME2SLOT[n];
+      if (SLOTS.count(sl) && SLOTS[sl].committed && SLOT_VAL.count(sl)) return SLOT_VAL[sl];
+    }
+  }
+  return dec;
+}
+
+static int hex2int(const std::string& h) {
+  int v = 0;
+  for (size_t i = 0; i < h.size(); i++) {
+    v <<= 4;
+    char c = h[i];
+    if (c >= '0' && c <= '9') v += c - '0';
+    else if (c >= 'A' && c <= 'F') v += c - 'A' + 10;
+    else if (c >= 'a' && c <= 'f') v += c - 'a' + 10;
+  }
+  return v & 0xFF;
+}
 // Unlambda: 变量访问必须有 . 前缀
 static bool g_unlambdaStrict=true;
 
 static std::string resolveArg(const std::string&a,bool&ok){
   ok=true;
+  if (a.size() == 1 && a[0] >= 'A' && a[0] <= 'Z') {
+    if (!VARS.count(a[0])) { ok = false; return ""; }
+    return VARS[a[0]];
+  }
+  bool _allD = !a.empty();
+  for (size_t i = 0; i < a.size(); i++) if (a[i] < '0' || a[i] > '9') { _allD = false; break; }
+  if (_allD) return a;
   std::string dec=b64decode(b64decode(a));
-  // Unlambda 前缀检查
+  // 命名变量 :name
+  if (dec.size() >= 2 && dec[0] == ':') {
+    std::string name = strToLower(dec.substr(1));
+    if (!NAME2SLOT.count(name)) { ok=false; return ""; }
+    int slot = NAME2SLOT[name];
+    if (!SLOTS.count(slot) || !SLOTS[slot].committed) { ok=false; return ""; }
+    if (SLOTS[slot].useCount >= USE_LIMIT) { ok=false; return ""; }
+    SLOTS[slot].useCount++;
+    if (!SLOT_VAL.count(slot)) { ok=false; return ""; }
+    return SLOT_VAL[slot];
+  }
+  // Unlambda 前缀
   if(dec.size()>=3&&dec[0]=='.'&&dec[1]=='$'&&dec[2]>='A'&&dec[2]<='Z'){
     if(!VARS.count(dec[2])){ok=false;return "";}
     return VARS[dec[2]];
@@ -472,10 +643,19 @@ static int runProgram(Program&prog){
         if(c.cmd==CMD_PRINTLN)std::cout<<"\n";
         std::cout.flush();break;}
       case CMD_SET:{
-        if(c.args.size()<2||c.args[0].size()!=1){std::cerr<<"[v6] SET\n";return 1;}
+        if(c.args.size()<2){std::cerr<<"[v6] SET\n";return 1;}
         std::string v=resolveArg(c.args[1],ok);
-        if(!ok){std::cerr<<"[v6] 变量未定义\n";return 1;}
-        VARS[c.args[0][0]]=v;break;}
+        if(!ok){std::cerr<<"[v6] 值未定义\n";return 1;}
+        if(c.args[0].size()>=2&&c.args[0][0]==':'){
+          std::string name=strToLower(c.args[0].substr(1));
+          if(!NAME2SLOT.count(name)){std::cerr<<"[v7] 变量未注册: "<<name<<"\n";return 1;}
+          int slot=NAME2SLOT[name];
+          if(!SLOTS[slot].committed){std::cerr<<"[v7] 未 COMMIT\n";return 1;}
+          SLOT_VAL[slot]=v;
+        } else if(c.args[0].size()==1){
+          VARS[c.args[0][0]]=v;
+        } else { std::cerr<<"[v7] 变量名非法\n"; return 1; }
+        break;}
       case CMD_INPUT:{
         if(c.args.empty()||c.args[0].size()!=1){std::cerr<<"[v6] INPUT\n";return 1;}
         std::string s;std::getline(std::cin,s);
@@ -599,7 +779,137 @@ static int runProgram(Program&prog){
         int t=atoi(c.args[0].c_str());
         if(!vm.lineMap.count(t)){std::cerr<<"[v6] COMEFROM 目标不存在\n";return 1;}
         pc=vm.lineMap[t];jumped=true;break;}
-      case CMD_PLEASE:break;  // 占位，什么都不做
+      case CMD_PLEASE:break;
+      case CMD_STR_LEN:{bool o;std::string v=argGet(c.args[1],o);if(!o){std::cerr<<"[v7] undef\n";return 1;}argSet(c.args[0],std::to_string(v.size()));break;}
+      case CMD_STR_AT:{bool o;std::string v=argGet(c.args[1],o);int i=atoi(simpleArg(c.args[2]).c_str());if(!o){std::cerr<<"[v7] undef\n";return 1;}if(i<0||i>=(int)v.size()){std::cerr<<"[v7] oob\n";return 1;}argSet(c.args[0],std::string(1,v[i]));break;}
+      case CMD_STR_SUB:{bool o;std::string v=argGet(c.args[1],o);int st=atoi(simpleArg(c.args[2]).c_str());int ln=atoi(simpleArg(c.args[3]).c_str());if(!o){std::cerr<<"[v7] undef\n";return 1;}if(st<0)st=0;if(st>(int)v.size())st=(int)v.size();if(st+ln>(int)v.size())ln=(int)v.size()-st;argSet(c.args[0],v.substr(st,ln));break;}
+      case CMD_STR_FIND:{bool o;std::string v=argGet(c.args[1],o);bool o2;std::string nd=argGet(c.args[2],o2);if(!o){std::cerr<<"[v7] undef\n";return 1;}size_t k=v.find(nd);argSet(c.args[0],k==std::string::npos?"-1":std::to_string((int)k));break;}
+      case CMD_STR_SPLIT:{bool o;std::string v=argGet(c.args[1],o);bool o2;std::string sp=argGet(c.args[2],o2);if(!o){std::cerr<<"[v7] undef\n";return 1;}size_t k=v.find(sp);argSet(c.args[0],k==std::string::npos?v:v.substr(0,k));break;}
+      case CMD_STR_UPPER:{bool o;std::string v=argGet(c.args[1],o);if(!o){std::cerr<<"[v7] undef\n";return 1;}for(size_t i=0;i<v.size();i++)if(v[i]>='a'&&v[i]<='z')v[i]-=32;argSet(c.args[0],v);break;}
+      case CMD_STR_LOWER:{bool o;std::string v=argGet(c.args[1],o);if(!o){std::cerr<<"[v7] undef\n";return 1;}for(size_t i=0;i<v.size();i++)if(v[i]>='A'&&v[i]<='Z')v[i]+=32;argSet(c.args[0],v);break;}
+      case CMD_STR_TRIM:{bool o;std::string v=argGet(c.args[1],o);if(!o){std::cerr<<"[v7] undef\n";return 1;}size_t a=0,b=v.size();while(a<b&&(v[a]==' '||v[a]=='\t'||v[a]=='\n'))a++;while(b>a&&(v[b-1]==' '||v[b-1]=='\t'||v[b-1]=='\n'))b--;argSet(c.args[0],v.substr(a,b-a));break;}
+      case CMD_STR_REPL:{bool o;std::string v=argGet(c.args[1],o);bool o2;std::string fr=argGet(c.args[2],o2);bool o3;std::string to=argGet(c.args[3],o3);if(!o){std::cerr<<"[v7] undef\n";return 1;}size_t k=0;while((k=v.find(fr,k))!=std::string::npos){v.replace(k,fr.size(),to);k+=to.size();}argSet(c.args[0],v);break;}
+      case CMD_STR_STARTS:{bool o;std::string v=argGet(c.args[1],o);bool o2;std::string pfx=argGet(c.args[2],o2);if(!o){std::cerr<<"[v7] undef\n";return 1;}argSet(c.args[0],(v.compare(0,pfx.size(),pfx)==0)?"1":"0");break;}
+      case CMD_STR_ENDS:{bool o;std::string v=argGet(c.args[1],o);bool o2;std::string sfx=argGet(c.args[2],o2);if(!o){std::cerr<<"[v7] undef\n";return 1;}argSet(c.args[0],(v.size()>=sfx.size()&&v.compare(v.size()-sfx.size(),sfx.size(),sfx)==0)?"1":"0");break;}
+      case CMD_CHR:{int n=atoi(simpleArg(c.args[1]).c_str());argSet(c.args[0],std::string(1,(char)(n&0xFF)));break;}
+      case CMD_ORD:{bool o;std::string v=argGet(c.args[1],o);if(!o){std::cerr<<"[v7] undef\n";return 1;}argSet(c.args[0],v.empty()?"0":std::to_string((int)(unsigned char)v[0]));break;}
+      case CMD_LST_NEW:{std::string n=simpleArg(c.args[0]);if(n.size()!=1){std::cerr<<"[v7] lst name\n";return 1;}LISTS[n[0]].clear();break;}
+      case CMD_LST_PUSH:{std::string n=simpleArg(c.args[0]);bool o;std::string v=argGet(c.args[1],o);if(n.size()!=1||!o){std::cerr<<"[v7] lst\n";return 1;}LISTS[n[0]].push_back(v);break;}
+      case CMD_LST_POP:{std::string n=simpleArg(c.args[1]);if(n.size()!=1||LISTS[n[0]].empty()){std::cerr<<"[v7] lst\n";return 1;}std::string v=LISTS[n[0]].back();LISTS[n[0]].pop_back();argSet(c.args[0],v);break;}
+      case CMD_LST_GET:{std::string n=simpleArg(c.args[1]);int i=atoi(simpleArg(c.args[2]).c_str());if(n.size()!=1||i<0||i>=(int)LISTS[n[0]].size()){std::cerr<<"[v7] lst oob\n";return 1;}argSet(c.args[0],LISTS[n[0]][i]);break;}
+      case CMD_LST_SET:{std::string n=simpleArg(c.args[0]);int i=atoi(simpleArg(c.args[1]).c_str());bool o;std::string v=argGet(c.args[2],o);if(n.size()!=1){std::cerr<<"[v7] lst name\n";return 1;}if(i<0)LISTS[n[0]].insert(LISTS[n[0]].begin(),v);else{if(i>=(int)LISTS[n[0]].size())LISTS[n[0]].resize(i+1);LISTS[n[0]][i]=v;}break;}
+      case CMD_LST_LEN:{std::string n=simpleArg(c.args[1]);if(n.size()!=1){std::cerr<<"[v7] lst name\n";return 1;}argSet(c.args[0],std::to_string(LISTS[n[0]].size()));break;}
+      case CMD_LST_DEL:{std::string n=simpleArg(c.args[0]);int i=atoi(simpleArg(c.args[1]).c_str());if(n.size()==1&&i>=0&&i<(int)LISTS[n[0]].size())LISTS[n[0]].erase(LISTS[n[0]].begin()+i);break;}
+      case CMD_LST_INS:{std::string n=simpleArg(c.args[0]);int i=atoi(simpleArg(c.args[1]).c_str());bool o;std::string v=argGet(c.args[2],o);if(n.size()!=1){std::cerr<<"[v7] lst name\n";return 1;}if(i<0)i=0;if(i>(int)LISTS[n[0]].size())i=(int)LISTS[n[0]].size();LISTS[n[0]].insert(LISTS[n[0]].begin()+i,v);break;}
+      case CMD_SIN:case CMD_COS:case CMD_TAN:case CMD_SQRT:case CMD_LOG:case CMD_EXP:case CMD_ABS:case CMD_FLOOR:case CMD_CEIL:case CMD_ROUND:{double x=atof(simpleArg(c.args[1]).c_str());double r=0;if(c.cmd==CMD_SIN)r=std::sin(x);else if(c.cmd==CMD_COS)r=std::cos(x);else if(c.cmd==CMD_TAN)r=std::tan(x);else if(c.cmd==CMD_SQRT)r=std::sqrt(x);else if(c.cmd==CMD_LOG)r=std::log(x);else if(c.cmd==CMD_EXP)r=std::exp(x);else if(c.cmd==CMD_ABS)r=std::fabs(x);else if(c.cmd==CMD_FLOOR)r=std::floor(x);else if(c.cmd==CMD_CEIL)r=std::ceil(x);else r=std::floor(x+0.5);char b[64];snprintf(b,sizeof(b),"%g",r);argSet(c.args[0],b);break;}
+      case CMD_POW:{double a=atof(simpleArg(c.args[1]).c_str()),b=atof(simpleArg(c.args[2]).c_str());char buf[64];snprintf(buf,sizeof(buf),"%g",std::pow(a,b));argSet(c.args[0],buf);break;}
+      case CMD_MIN:{double a=atof(simpleArg(c.args[1]).c_str()),b=atof(simpleArg(c.args[2]).c_str());char buf[64];snprintf(buf,sizeof(buf),"%g",a<b?a:b);argSet(c.args[0],buf);break;}
+      case CMD_MAX:{double a=atof(simpleArg(c.args[1]).c_str()),b=atof(simpleArg(c.args[2]).c_str());char buf[64];snprintf(buf,sizeof(buf),"%g",a>b?a:b);argSet(c.args[0],buf);break;}
+      case CMD_GOTO:{int x=atoi(simpleArg(c.args[0]).c_str()),y=atoi(simpleArg(c.args[1]).c_str());std::cout<<"\x1b["<<y<<";"<<x<<"H";std::cout.flush();break;}
+      case CMD_COLOR:{int n=atoi(simpleArg(c.args[0]).c_str());std::cout<<"\x1b[38;5;"<<n<<"m";std::cout.flush();break;}
+      case CMD_BGCOLOR:{int n=atoi(simpleArg(c.args[0]).c_str());std::cout<<"\x1b[48;5;"<<n<<"m";std::cout.flush();break;}
+      case CMD_CLR_LINE:{std::cout<<"\x1b[2K";std::cout.flush();break;}
+      case CMD_CLR_SCREEN:{std::cout<<"\x1b[2J\x1b[H";std::cout.flush();break;}
+      case CMD_DRAW_CH:{bool o;std::string v=argGet(c.args[0],o);if(o)std::cout<<v;std::cout.flush();break;}
+      case CMD_DRAW_STR:{bool o;std::string v=argGet(c.args[0],o);std::cout<<v;std::cout.flush();break;}
+      case CMD_DRAW_HLINE:{int n=atoi(simpleArg(c.args[0]).c_str());for(int i=0;i<n;i++)std::cout<<"-";std::cout.flush();break;}
+      case CMD_DRAW_VLINE:{int n=atoi(simpleArg(c.args[0]).c_str());for(int i=0;i<n;i++)std::cout<<"|\n";std::cout.flush();break;}
+      case CMD_DRAW_BOX:{int w=atoi(simpleArg(c.args[0]).c_str()),h=atoi(simpleArg(c.args[1]).c_str());for(int x=0;x<w;x++)std::cout<<"-";std::cout<<"\n";for(int y=0;y<h;y++){std::cout<<"|";for(int x=0;x<w-2;x++)std::cout<<" ";std::cout<<"|\n";}for(int x=0;x<w;x++)std::cout<<"-";std::cout<<"\n";std::cout.flush();break;}
+      case CMD_F_OPEN:{std::string fv=simpleArg(c.args[0]);bool o;std::string path=argGet(c.args[1],o);std::string mode=c.args.size()>2?simpleArg(c.args[2]):"r";if(fv.size()!=1){std::cerr<<"[v7] fh\n";return 1;}char fc=fv[0];if(FIN.count(fc)){FIN[fc]->close();delete FIN[fc];FIN.erase(fc);}if(FOUT.count(fc)){FOUT[fc]->close();delete FOUT[fc];FOUT.erase(fc);}if(mode=="r"){FIN[fc]=new std::ifstream(path.c_str(),std::ios::binary);}else{FOUT[fc]=new std::ofstream(path.c_str(),std::ios::binary|(mode=="a"?std::ios::app:std::ios::trunc));}break;}
+      case CMD_F_CLOSE:{std::string fv=simpleArg(c.args[0]);if(fv.size()!=1)break;char fc=fv[0];if(FIN.count(fc)){FIN[fc]->close();delete FIN[fc];FIN.erase(fc);}if(FOUT.count(fc)){FOUT[fc]->close();delete FOUT[fc];FOUT.erase(fc);}break;}
+      case CMD_F_READ:{std::string fv=simpleArg(c.args[1]);if(fv.size()!=1||!FIN.count(fv[0])){std::cerr<<"[v7] fin\n";return 1;}std::stringstream ss;ss<<FIN[fv[0]]->rdbuf();argSet(c.args[0],ss.str());break;}
+      case CMD_F_READLN:{std::string fv=simpleArg(c.args[1]);if(fv.size()!=1||!FIN.count(fv[0])){std::cerr<<"[v7] fin\n";return 1;}std::string ln;std::getline(*FIN[fv[0]],ln);argSet(c.args[0],ln);break;}
+      case CMD_F_WRITE:{std::string fv=simpleArg(c.args[0]);bool o;std::string t=argGet(c.args[1],o);if(fv.size()!=1||!FOUT.count(fv[0])){std::cerr<<"[v7] fout\n";return 1;}*FOUT[fv[0]]<<t;break;}
+      case CMD_F_SEEK:{std::string fv=simpleArg(c.args[0]);int pos=atoi(simpleArg(c.args[1]).c_str());if(fv.size()!=1||!FIN.count(fv[0]))break;FIN[fv[0]]->seekg(pos);break;}
+      case CMD_F_TELL:{std::string fv=simpleArg(c.args[1]);if(fv.size()!=1||!FIN.count(fv[0]))break;argSet(c.args[0],std::to_string((long long)FIN[fv[0]]->tellg()));break;}
+      case CMD_DIR_LIST:{break;}
+      case CMD_FILE_DEL:{bool o;std::string p=argGet(c.args[0],o);std::remove(p.c_str());break;}
+      case CMD_FILE_REN:{bool o;std::string a=argGet(c.args[0],o);bool o2;std::string b=argGet(c.args[1],o2);std::rename(a.c_str(),b.c_str());break;}
+      case CMD_CMP:{bool o;std::string a=argGet(c.args[0],o);bool o2;std::string b=argGet(c.args[1],o2);if(a<b)g_cmpFlag=-1;else if(a>b)g_cmpFlag=1;else g_cmpFlag=0;break;}
+      case CMD_CMP_IMM:{bool o;std::string a=argGet(c.args[0],o);long x=atol(a.c_str());long y=atol(simpleArg(c.args[1]).c_str());g_cmpFlag=(x<y)?-1:(x>y)?1:0;break;}
+      case CMD_JE:{if(g_cmpFlag==0){int t=atoi(c.args[0].c_str());if(!vm.lineMap.count(t)){std::cerr<<"[v7] je\n";return 1;}pc=vm.lineMap[t];jumped=true;}break;}
+      case CMD_JNE:{if(g_cmpFlag!=0){int t=atoi(c.args[0].c_str());if(!vm.lineMap.count(t)){std::cerr<<"[v7] jne\n";return 1;}pc=vm.lineMap[t];jumped=true;}break;}
+      case CMD_JL:{if(g_cmpFlag<0){int t=atoi(c.args[0].c_str());if(!vm.lineMap.count(t)){std::cerr<<"[v7] jl\n";return 1;}pc=vm.lineMap[t];jumped=true;}break;}
+      case CMD_JG:{if(g_cmpFlag>0){int t=atoi(c.args[0].c_str());if(!vm.lineMap.count(t)){std::cerr<<"[v7] jg\n";return 1;}pc=vm.lineMap[t];jumped=true;}break;}
+      case CMD_JZ:{bool o;std::string v=argGet(c.args[0],o);if(atol(v.c_str())==0){int t=atoi(c.args[1].c_str());if(!vm.lineMap.count(t)){std::cerr<<"[v7] jz\n";return 1;}pc=vm.lineMap[t];jumped=true;}break;}
+      case CMD_JNZ:{bool o;std::string v=argGet(c.args[0],o);if(atol(v.c_str())!=0){int t=atoi(c.args[1].c_str());if(!vm.lineMap.count(t)){std::cerr<<"[v7] jnz\n";return 1;}pc=vm.lineMap[t];jumped=true;}break;}
+      case CMD_NOP:break;
+      case CMD_LOAD:{bool o;g_acc=argGet(c.args[0],o);break;}
+      case CMD_STORE:{argSet(c.args[0],g_acc);break;}
+      case CMD_OUT:{bool o;std::string v=argGet(c.args[0],o);std::cout<<v;std::cout.flush();break;}
+      case CMD_OUT_LN:{bool o;std::string v=argGet(c.args[0],o);std::cout<<v<<"\n";std::cout.flush();break;}
+      case CMD_TIME_MS:{long long ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();argSet(c.args[0],std::to_string(ms));break;}
+      case CMD_TIME_NS:{long long ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();argSet(c.args[0],std::to_string(ns));break;}
+      case CMD_TIME_FMT:{time_t t=std::time(NULL);char buf[64];strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M:%S",localtime(&t));argSet(c.args[0],buf);break;}
+      case CMD_SLEEP_MS:{int n=atoi(simpleArg(c.args[0]).c_str());std::this_thread::sleep_for(std::chrono::milliseconds(n));break;}
+      case CMD_DIM:{
+        if(c.args.size()<1){std::cerr<<"[v7] DIM\n";return 1;}
+        int slot=atoi(c.args[0].c_str());
+        if(slot!=NEXT_SLOT){std::cerr<<"[v7] 槽位必须连续，期望 "<<NEXT_SLOT<<" 实际 "<<slot<<"\n";return 1;}
+        if(SLOTS.count(slot)){std::cerr<<"[v7] 槽位已占\n";return 1;}
+        SLOTS[slot]=VarSlot();SLOTS[slot].dimmed=true;NEXT_SLOT++;
+        break;}
+      case CMD_DECL:{
+        if(c.args.size()<2){std::cerr<<"[v7] DECL\n";return 1;}
+        int slot=atoi(c.args[0].c_str());std::string t=c.args[1];
+        if(!SLOTS.count(slot)||!SLOTS[slot].dimmed){std::cerr<<"[v7] 未 DIM\n";return 1;}
+        if(SLOTS[slot].declared){std::cerr<<"[v7] 已 DECL\n";return 1;}
+        if(t!="T"&&t!="N"&&t!="L"){std::cerr<<"[v7] 类型必须 T/N/L\n";return 1;}
+        SLOTS[slot].type=(t=="T")?0:(t=="N")?1:2;SLOTS[slot].declared=true;
+        break;}
+      case CMD_BIND:{
+        if(c.args.size()<2){std::cerr<<"[v7] BIND\n";return 1;}
+        int slot=atoi(c.args[0].c_str());
+        if(!SLOTS.count(slot)||!SLOTS[slot].declared){std::cerr<<"[v7] 未 DECL\n";return 1;}
+        if(SLOTS[slot].bound){std::cerr<<"[v7] 已 BIND\n";return 1;}
+        std::string nm=b64decode(b64decode(c.args[1]));
+        if(nm.empty()){std::cerr<<"[v7] 名字空\n";return 1;}
+        int bl=b64len(c.args[1]);
+        if(!isPrimeN(bl)){std::cerr<<"[v7] 名字 base64 长度 "<<bl<<" 不是质数\n";return 1;}
+        SLOTS[slot].name=nm;SLOTS[slot].bound=true;
+        NAME2SLOT[strToLower(nm)]=slot;
+        break;}
+      case CMD_SALT:{
+        if(c.args.size()<1){std::cerr<<"[v7] SALT\n";return 1;}
+        int slot=atoi(c.args[0].c_str());
+        if(!SLOTS.count(slot)||!SLOTS[slot].bound){std::cerr<<"[v7] 未 BIND\n";return 1;}
+        SLOTS[slot].salt=slot*slot;SLOTS[slot].salted=true;
+        break;}
+      case CMD_CHK:{
+        if(c.args.size()<2){std::cerr<<"[v7] CHK\n";return 1;}
+        int slot=atoi(c.args[0].c_str());
+        if(!SLOTS.count(slot)||!SLOTS[slot].salted){std::cerr<<"[v7] 未 SALT\n";return 1;}
+        int got=hex2int(c.args[1]);
+        int sum=0;const std::string&nm=SLOTS[slot].name;
+        for(size_t i=0;i<nm.size();i++)sum+=(unsigned char)nm[i];
+        int want=(sum+slot)&0xFF;
+        if(got!=want){char b[64];snprintf(b,sizeof(b),"[v7] CHK 错: 期望 %02X 实际 %02X",want,got);std::cerr<<b<<"\n";return 1;}
+        SLOTS[slot].checksum=got;SLOTS[slot].chked=true;
+        break;}
+      case CMD_COMMIT:{
+        if(c.args.size()<1){std::cerr<<"[v7] COMMIT\n";return 1;}
+        int slot=atoi(c.args[0].c_str());
+        if(!SLOTS.count(slot)){std::cerr<<"[v7] 未 DIM\n";return 1;}
+        VarSlot&vs=SLOTS[slot];
+        if(!vs.dimmed||!vs.declared||!vs.bound||!vs.salted||!vs.chked){
+          std::cerr<<"[v7] COMMIT 前置不全\n";return 1;}
+        vs.committed=true;
+        break;}
+      case CMD_REFRESH:{
+        if(c.args.size()<2){std::cerr<<"[v7] REFRESH\n";return 1;}
+        int slot=atoi(c.args[0].c_str());
+        if(!SLOTS.count(slot)||!SLOTS[slot].committed){std::cerr<<"[v7] 未 COMMIT\n";return 1;}
+        int got=hex2int(c.args[1]);
+        int want=(SLOTS[slot].checksum*7+SLOTS[slot].useCount)&0xFF;
+        if(got!=want){char b[64];snprintf(b,sizeof(b),"[v7] REFRESH 错: 期望 %02X",want);std::cerr<<b<<"\n";return 1;}
+        SLOTS[slot].useCount=0;
+        break;}
+      case CMD_UNSET:{
+        if(c.args.size()<1){std::cerr<<"[v7] UNSET\n";return 1;}
+        int slot=atoi(c.args[0].c_str());
+        if(SLOTS.count(slot)&&SLOTS[slot].bound)NAME2SLOT.erase(strToLower(SLOTS[slot].name));
+        SLOTS.erase(slot);SLOT_VAL.erase(slot);
+        break;}
     }
     if(!jumped)pc++;
   }

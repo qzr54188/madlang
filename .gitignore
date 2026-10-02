@@ -1,7 +1,6 @@
 # 编译产物
-madlangv5
-madlangv6
-mad6
+madlangv7
+madgen
 *.o
 *.obj
 
@@ -9,14 +8,12 @@ mad6
 fix*.py
 patch*.py
 
-# 临时工作文件
-work.spec
-work.m5
-tape_bad.m6
+# 临时文件
+out.m6
 *.tmp
 *.log
 
-# Python 缓存
+# Python 缓存（如果还有残留）
 __pycache__/
 *.pyc
 
